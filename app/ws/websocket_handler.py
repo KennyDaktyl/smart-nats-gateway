@@ -4,6 +4,7 @@ from app.core.logging import logger
 from app.ws.subscriptions import (
     add_raspberry_subscription,
     add_inverter_subscription,
+    remove_inverter_subscription,
     remove_ws,
     clients,
 )
