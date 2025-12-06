@@ -17,16 +17,29 @@ async def heartbeat_consumer(sub):
         for msg in msgs:
             try:
                 data = json.loads(msg.data.decode())
-                uuid = data["uuid"]
+                payload = data.get("payload", {}) if isinstance(data, dict) else {}
+
+                uuid = payload.get("uuid")
+                status = payload.get("status", "online")
+
+                if not uuid:
+                    logger.error(
+                        f"Heartbeat consumer error: missing uuid "
+                        f"(subject={msg.subject}, payload={data})"
+                    )
+                    await msg.ack()
+                    continue
+
+                logger.info(f"Received heartbeat message: {data}")
 
                 last_seen[uuid] = time.time()
-                raspberry_status[uuid] = "online"
+                raspberry_status[uuid] = status
 
                 logger.info(f"Heartbeat {uuid}, payload: {data}")
 
                 await send_to_subscribers(uuid, {
                     "type": "raspberry_heartbeat",
-                    "data": {**data, "status": "online"}
+                    "data": {**payload, "status": status}
                 })
 
                 await msg.ack()
