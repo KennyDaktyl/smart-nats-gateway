@@ -3,6 +3,7 @@ raspberry_subs: dict[str, set] = {}
 inverter_subs: dict[str, set] = {}
 
 clients = set()
+raspberry_ws_sets: dict = {}
 
 
 def add_raspberry_subscription(uuid: str, ws):
@@ -37,6 +38,8 @@ def remove_ws(ws):
     removed_raspberry = 0
     removed_inverter = 0
 
+    raspberry_ws_sets.pop(ws, None)
+
     for uuid, subs in list(raspberry_subs.items()):
         if ws in subs:
             removed_raspberry += 1
@@ -53,6 +56,14 @@ def remove_ws(ws):
 
     clients.discard(ws)
     return removed_raspberry, removed_inverter
+
+
+def get_cached_raspberry_set(ws):
+    return raspberry_ws_sets.get(ws, set())
+
+
+def cache_raspberry_set(ws, uuids: set[str]):
+    raspberry_ws_sets[ws] = set(uuids)
 
 
 def get_raspberry_subscribers(uuid: str):

@@ -6,6 +6,8 @@ from app.ws.subscriptions import (
     remove_raspberry_subscription,
     raspberry_subs,
     get_raspberry_subscriptions_for_ws,
+    get_cached_raspberry_set,
+    cache_raspberry_set,
     add_inverter_subscription,
     remove_inverter_subscription,
     remove_ws,
@@ -34,9 +36,10 @@ async def websocket_handler(ws):
                 elif action == "subscribe_many":
                     uuids = set(data["uuids"])
 
+                    cached = get_cached_raspberry_set(ws)
                     current = get_raspberry_subscriptions_for_ws(ws)
-                    if current == uuids:
-                        logger.debug(
+                    if cached == uuids and current == uuids:
+                        logger.info(
                             f"WS subscribe_many received identical set, skipping update: {list(uuids)}"
                         )
                         continue
@@ -47,6 +50,7 @@ async def websocket_handler(ws):
 
                     for uuid in uuids - current:
                         add_raspberry_subscription(uuid, ws)
+                    cache_raspberry_set(ws, uuids)
                     logger.info(f"WS subscribed to MANY: {list(uuids)}")
 
                 elif action == "unsubscribe_many":
@@ -58,6 +62,7 @@ async def websocket_handler(ws):
                         after = len(raspberry_subs.get(uuid, ()))
                         if before != after:
                             removed_any = True
+                    cache_raspberry_set(ws, get_raspberry_subscriptions_for_ws(ws))
                     if removed_any:
                         logger.info(f"WS unsubscribed from MANY: {list(uuids)}")
 
