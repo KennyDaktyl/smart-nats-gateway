@@ -61,3 +61,10 @@ def get_raspberry_subscribers(uuid: str):
 
 def get_inverter_subscribers(serial: str):
     return inverter_subs.get(serial, set())
+
+
+def get_raspberry_subscriptions_for_ws(ws):
+    """
+    Return a set of UUIDs this websocket is subscribed to.
+    """
+    return {uuid for uuid, subs in raspberry_subs.items() if ws in subs}

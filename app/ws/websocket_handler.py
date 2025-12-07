@@ -5,6 +5,7 @@ from app.ws.subscriptions import (
     add_raspberry_subscription,
     remove_raspberry_subscription,
     raspberry_subs,
+    get_raspberry_subscriptions_for_ws,
     add_inverter_subscription,
     remove_inverter_subscription,
     remove_ws,
@@ -33,20 +34,32 @@ async def websocket_handler(ws):
                 elif action == "subscribe_many":
                     uuids = set(data["uuids"])
 
-                    # Align server state with the provided list to avoid stale subs
-                    for uuid, subs in list(raspberry_subs.items()):
-                        if ws in subs and uuid not in uuids:
-                            remove_raspberry_subscription(uuid, ws)
+                    current = get_raspberry_subscriptions_for_ws(ws)
+                    if current == uuids:
+                        logger.debug(
+                            f"WS subscribe_many received identical set, skipping update: {list(uuids)}"
+                        )
+                        continue
 
-                    for uuid in uuids:
+                    # Align server state with the provided list to avoid stale subs
+                    for uuid in current - uuids:
+                        remove_raspberry_subscription(uuid, ws)
+
+                    for uuid in uuids - current:
                         add_raspberry_subscription(uuid, ws)
                     logger.info(f"WS subscribed to MANY: {list(uuids)}")
 
                 elif action == "unsubscribe_many":
                     uuids = set(data.get("uuids", []))
+                    removed_any = False
                     for uuid in uuids:
+                        before = len(raspberry_subs.get(uuid, ()))
                         remove_raspberry_subscription(uuid, ws)
-                    logger.info(f"WS unsubscribed from MANY: {list(uuids)}")
+                        after = len(raspberry_subs.get(uuid, ()))
+                        if before != after:
+                            removed_any = True
+                    if removed_any:
+                        logger.info(f"WS unsubscribed from MANY: {list(uuids)}")
 
                 # -------------------------------------------------------
                 # Inverter subscriptions
