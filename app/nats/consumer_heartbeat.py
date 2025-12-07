@@ -17,7 +17,24 @@ async def heartbeat_consumer(sub):
         for msg in msgs:
             try:
                 data = json.loads(msg.data.decode())
-                payload = data.get("payload", {}) if isinstance(data, dict) else {}
+                logger.info(f"Heartbeat message data: {data}")
+
+                if not isinstance(data, dict):
+                    logger.error(
+                        f"Heartbeat consumer error: unexpected payload type "
+                        f"(subject={msg.subject}, payload={data})"
+                    )
+                    await msg.ack()
+                    continue
+
+                payload = data.get("payload", {})
+                if not isinstance(payload, dict):
+                    logger.error(
+                        f"Heartbeat consumer error: payload is not a dict "
+                        f"(subject={msg.subject}, payload={data})"
+                    )
+                    await msg.ack()
+                    continue
 
                 uuid = payload.get("uuid")
                 status = payload.get("status", "online")
@@ -44,4 +61,5 @@ async def heartbeat_consumer(sub):
 
                 await msg.ack()
             except Exception as e:
-                logger.error(f"Heartbeat consumer error: {e}")
+                logger.error(f"Heartbeat consumer error: {e} (subject={msg.subject})")
+                await msg.ack()

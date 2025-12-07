@@ -3,6 +3,8 @@ from app.core.logging import logger
 
 from app.ws.subscriptions import (
     add_raspberry_subscription,
+    remove_raspberry_subscription,
+    raspberry_subs,
     add_inverter_subscription,
     remove_inverter_subscription,
     remove_ws,
@@ -29,10 +31,22 @@ async def websocket_handler(ws):
                     logger.info(f"WS subscribed to Raspberry {uuid}")
 
                 elif action == "subscribe_many":
-                    uuids = data["uuids"]
+                    uuids = set(data["uuids"])
+
+                    # Align server state with the provided list to avoid stale subs
+                    for uuid, subs in list(raspberry_subs.items()):
+                        if ws in subs and uuid not in uuids:
+                            remove_raspberry_subscription(uuid, ws)
+
                     for uuid in uuids:
                         add_raspberry_subscription(uuid, ws)
-                    logger.info(f"WS subscribed to MANY: {uuids}")
+                    logger.info(f"WS subscribed to MANY: {list(uuids)}")
+
+                elif action == "unsubscribe_many":
+                    uuids = set(data.get("uuids", []))
+                    for uuid in uuids:
+                        remove_raspberry_subscription(uuid, ws)
+                    logger.info(f"WS unsubscribed from MANY: {list(uuids)}")
 
                 # -------------------------------------------------------
                 # Inverter subscriptions
@@ -54,5 +68,8 @@ async def websocket_handler(ws):
                 logger.warning(f"Bad WS message: {e}")
 
     finally:
-        remove_ws(ws)
-        logger.info(f"Client disconnected ({len(clients)} total))")
+        r_removed, i_removed = remove_ws(ws)
+        logger.info(
+            f"Client disconnected ({len(clients)} total), "
+            f"removed from {r_removed} raspberry and {i_removed} inverter subscriptions"
+        )

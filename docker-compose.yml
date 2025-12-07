@@ -2,8 +2,12 @@ services:
   nats_gateway:
     build: .
     container_name: nats_gateway
-    restart: always
+    restart: unless-stopped
     ports:
     - "8765:8765"
     env_file:
       - .env
+    environment:
+      LOG_DIR: /app/logs
+    volumes:
+      - ./logs:/app/logs
