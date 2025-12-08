@@ -2,7 +2,8 @@
 import json
 from app.ws.subscriptions import (
     get_raspberry_subscribers,
-    get_inverter_subscribers
+    get_inverter_subscribers,
+    ws_label,
 )
 from app.core.logging import logger
 
@@ -16,11 +17,18 @@ async def send_to_subscribers(uuid: str, payload: dict):
     msg = json.dumps(payload)
     dead = []
 
+    subscribers_labels = [ws_label(ws) for ws in subs]
+    logger.info(
+        f"Sending heartbeat for Raspberry {uuid} to {len(subs)} WS client(s): "
+        f"{subscribers_labels}"
+    )
+
     for ws in list(subs):
         try:
             await ws.send(msg)
-        except:
+        except Exception as e:
             dead.append(ws)
+            logger.warning(f"Send failed to {ws_label(ws)} for Raspberry {uuid}: {e}")
 
     if dead:
         logger.info(
@@ -43,11 +51,18 @@ async def send_to_inverter_subscribers(serial: str, payload: dict):
     msg = json.dumps(payload)
     dead = []
 
+    subscribers_labels = [ws_label(ws) for ws in subs]
+    logger.info(
+        f"Sending inverter update for {serial} to {len(subs)} WS client(s): "
+        f"{subscribers_labels}"
+    )
+
     for ws in list(subs):
         try:
             await ws.send(msg)
-        except:
+        except Exception as e:
             dead.append(ws)
+            logger.warning(f"Send failed to {ws_label(ws)} for Inverter {serial}: {e}")
 
     if dead:
         logger.info(

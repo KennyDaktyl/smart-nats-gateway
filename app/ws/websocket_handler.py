@@ -12,12 +12,13 @@ from app.ws.subscriptions import (
     remove_inverter_subscription,
     remove_ws,
     clients,
+    ws_label,
 )
 
 
 async def websocket_handler(ws):
     clients.add(ws)
-    logger.info(f"Client connected ({len(clients)} total)")
+    logger.info(f"Client connected {ws_label(ws)} ({len(clients)} total)")
 
     try:
         async for raw in ws:
@@ -88,6 +89,6 @@ async def websocket_handler(ws):
     finally:
         r_removed, i_removed = remove_ws(ws)
         logger.info(
-            f"Client disconnected ({len(clients)} total), "
+            f"Client disconnected {ws_label(ws)} ({len(clients)} total), "
             f"removed from {r_removed} raspberry and {i_removed} inverter subscriptions"
         )
