@@ -23,26 +23,32 @@ def ws_label(ws) -> str:
 def add_raspberry_subscription(uuid: str, ws):
     subs = raspberry_subs.setdefault(uuid, set())
     already = ws in subs
+    was_empty = len(subs) == 0
     subs.add(ws)
     logger.info(
         f"[subs] Raspberry {uuid} <- {ws_label(ws)} "
         f"({'already' if already else 'new'}) | total for uuid={len(subs)}"
     )
+    return was_empty and not already
 
 
 def remove_raspberry_subscription(uuid: str, ws):
     subs = raspberry_subs.get(uuid)
     if subs is None:
-        return
+        return False
 
+    had_ws = ws in subs
     subs.discard(ws)
     logger.info(
         f"[subs] Raspberry {uuid} removed {ws_label(ws)} "
         f"| remaining for uuid={len(subs)}"
     )
-    if not subs:
+    if not subs and had_ws:
         raspberry_subs.pop(uuid, None)
         logger.info(f"[subs] Raspberry {uuid} has no remaining WS subscribers")
+        return True
+
+    return False
 
 
 def add_inverter_subscription(serial: str, ws):
@@ -73,6 +79,7 @@ def remove_inverter_subscription(serial: str, ws):
 def remove_ws(ws):
     removed_raspberry = 0
     removed_inverter = 0
+    emptied_raspberry: set[str] = set()
 
     raspberry_ws_sets.pop(ws, None)
 
@@ -82,6 +89,7 @@ def remove_ws(ws):
             subs.discard(ws)
             if not subs:
                 raspberry_subs.pop(uuid, None)
+                emptied_raspberry.add(uuid)
 
     for serial, subs in list(inverter_subs.items()):
         if ws in subs:
@@ -95,7 +103,7 @@ def remove_ws(ws):
         f"[subs] {ws_label(ws)} removed from {removed_raspberry} raspberry "
         f"and {removed_inverter} inverter subscription(s)"
     )
-    return removed_raspberry, removed_inverter
+    return removed_raspberry, removed_inverter, emptied_raspberry
 
 
 def get_cached_raspberry_set(ws):

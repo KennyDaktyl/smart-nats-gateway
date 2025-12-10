@@ -14,6 +14,7 @@ from app.ws.subscriptions import (
     clients,
     ws_label,
 )
+from app.nats.publisher import publish_heartbeat_control
 
 
 async def websocket_handler(ws):
@@ -31,7 +32,9 @@ async def websocket_handler(ws):
                 # -------------------------------------------------------
                 if action == "subscribe":
                     uuid = data["uuid"]
-                    add_raspberry_subscription(uuid, ws)
+                    is_first = add_raspberry_subscription(uuid, ws)
+                    if is_first:
+                        await publish_heartbeat_control(uuid, "start")
                     logger.info(f"WS subscribed to Raspberry {uuid}")
 
                 elif action == "subscribe_many":
@@ -47,10 +50,14 @@ async def websocket_handler(ws):
 
                     # Align server state with the provided list to avoid stale subs
                     for uuid in current - uuids:
-                        remove_raspberry_subscription(uuid, ws)
+                        emptied = remove_raspberry_subscription(uuid, ws)
+                        if emptied:
+                            await publish_heartbeat_control(uuid, "stop")
 
                     for uuid in uuids - current:
-                        add_raspberry_subscription(uuid, ws)
+                        is_first = add_raspberry_subscription(uuid, ws)
+                        if is_first:
+                            await publish_heartbeat_control(uuid, "start")
                     cache_raspberry_set(ws, uuids)
                     logger.info(f"WS subscribed to MANY: {list(uuids)}")
 
@@ -59,10 +66,12 @@ async def websocket_handler(ws):
                     removed_any = False
                     for uuid in uuids:
                         before = len(raspberry_subs.get(uuid, ()))
-                        remove_raspberry_subscription(uuid, ws)
+                        emptied = remove_raspberry_subscription(uuid, ws)
                         after = len(raspberry_subs.get(uuid, ()))
                         if before != after:
                             removed_any = True
+                        if emptied:
+                            await publish_heartbeat_control(uuid, "stop")
                     cache_raspberry_set(ws, get_raspberry_subscriptions_for_ws(ws))
                     if removed_any:
                         logger.info(f"WS unsubscribed from MANY: {list(uuids)}")
@@ -87,7 +96,9 @@ async def websocket_handler(ws):
                 logger.warning(f"Bad WS message: {e}")
 
     finally:
-        r_removed, i_removed = remove_ws(ws)
+        r_removed, i_removed, emptied_raspberry = remove_ws(ws)
+        for uuid in emptied_raspberry:
+            await publish_heartbeat_control(uuid, "stop")
         logger.info(
             f"Client disconnected {ws_label(ws)} ({len(clients)} total), "
             f"removed from {r_removed} raspberry and {i_removed} inverter subscriptions"

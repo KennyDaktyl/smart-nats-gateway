@@ -10,6 +10,7 @@ from app.nats.subjects import INVERTER_UPDATE, RASPBERRY_HEARTBEAT
 from app.nats.consumer_inverter import inverter_consumer
 from app.nats.consumer_heartbeat import heartbeat_consumer, last_seen, raspberry_status
 from app.watchdog.offline_checker import watchdog
+from app.nats.publisher import set_jetstream_client
 from app.ws.websocket_handler import websocket_handler
 
 
@@ -18,6 +19,7 @@ async def start_gateway():
 
     nc = await nats.connect(settings.NATS_URL)
     js = nc.jetstream()
+    set_jetstream_client(js)
 
     logger.info("Connected to NATS JetStream")
 
