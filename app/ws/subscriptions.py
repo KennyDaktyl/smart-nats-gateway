@@ -1,11 +1,10 @@
 # app/ws/subscriptions.py
 from app.core.logging import logger
 
-raspberry_subs: dict[str, set] = {}
-inverter_subs: dict[str, set] = {}
+subscribers: dict[str, set] = {}
 
 clients = set()
-raspberry_ws_sets: dict = {}
+ws_sets: dict = {}
 
 
 def ws_label(ws) -> str:
@@ -20,110 +19,70 @@ def ws_label(ws) -> str:
     return f"ws#{id(ws)}@{peer_repr}"
 
 
-def add_raspberry_subscription(uuid: str, ws):
-    subs = raspberry_subs.setdefault(uuid, set())
+def add_subscription(subject: str, ws):
+    subs = subscribers.setdefault(subject, set())
     already = ws in subs
     was_empty = len(subs) == 0
     subs.add(ws)
     logger.info(
-        f"[subs] Raspberry {uuid} <- {ws_label(ws)} "
+        f"[subs] Subject {subject} <- {ws_label(ws)} "
         f"({'already' if already else 'new'}) | total for uuid={len(subs)}"
     )
     return was_empty and not already
 
 
-def remove_raspberry_subscription(uuid: str, ws):
-    subs = raspberry_subs.get(uuid)
+def remove_subscription(subject: str, ws):
+    subs = subscribers.get(subject)
     if subs is None:
         return False
 
     had_ws = ws in subs
     subs.discard(ws)
     logger.info(
-        f"[subs] Raspberry {uuid} removed {ws_label(ws)} "
-        f"| remaining for uuid={len(subs)}"
+        f"[subs] Subject {subject} removed {ws_label(ws)} "
+        f"| remaining for subject={len(subs)}"
     )
     if not subs and had_ws:
-        raspberry_subs.pop(uuid, None)
-        logger.info(f"[subs] Raspberry {uuid} has no remaining WS subscribers")
+        subscribers.pop(subject, None)
+        logger.info(f"[subs] Subject {subject} has no remaining WS subscribers")
         return True
 
     return False
 
 
-def add_inverter_subscription(serial: str, ws):
-    subs = inverter_subs.setdefault(serial, set())
-    already = ws in subs
-    subs.add(ws)
-    logger.info(
-        f"[subs] Inverter {serial} <- {ws_label(ws)} "
-        f"({'already' if already else 'new'}) | total for serial={len(subs)}"
-    )
-
-
-def remove_inverter_subscription(serial: str, ws):
-    subs = inverter_subs.get(serial)
-    if subs is None:
-        return
-
-    subs.discard(ws)
-    logger.info(
-        f"[subs] Inverter {serial} removed {ws_label(ws)} "
-        f"| remaining for serial={len(subs)}"
-    )
-    if not subs:
-        inverter_subs.pop(serial, None)
-        logger.info(f"[subs] Inverter {serial} has no remaining WS subscribers")
-
-
 def remove_ws(ws):
-    removed_raspberry = 0
-    removed_inverter = 0
-    emptied_raspberry: set[str] = set()
+    removed_subscriber = 0
+    emptied_subscriber: set[str] = set()
 
-    raspberry_ws_sets.pop(ws, None)
+    ws_sets.pop(ws, None)
 
-    for uuid, subs in list(raspberry_subs.items()):
+    for subject, subs in list(subscribers.items()):
         if ws in subs:
-            removed_raspberry += 1
+            removed_subscriber += 1
             subs.discard(ws)
             if not subs:
-                raspberry_subs.pop(uuid, None)
-                emptied_raspberry.add(uuid)
-
-    for serial, subs in list(inverter_subs.items()):
-        if ws in subs:
-            removed_inverter += 1
-            subs.discard(ws)
-            if not subs:
-                inverter_subs.pop(serial, None)
+                subscribers.pop(subject, None)
+                emptied_subscriber.add(subject)
 
     clients.discard(ws)
-    logger.info(
-        f"[subs] {ws_label(ws)} removed from {removed_raspberry} raspberry "
-        f"and {removed_inverter} inverter subscription(s)"
-    )
-    return removed_raspberry, removed_inverter, emptied_raspberry
+    logger.info(f"[subs] {ws_label(ws)} removed from {removed_subscriber} subscribers ")
+    return removed_subscriber, emptied_subscriber
 
 
-def get_cached_raspberry_set(ws):
-    return raspberry_ws_sets.get(ws, set())
+def get_cached_subcribers_set(ws):
+    return ws_sets.get(ws, set())
 
 
-def cache_raspberry_set(ws, uuids: set[str]):
-    raspberry_ws_sets[ws] = set(uuids)
+def cache_subcribers_set(ws, subjects: set[str]):
+    ws_sets[ws] = set(subjects)
 
 
-def get_raspberry_subscribers(uuid: str):
-    return raspberry_subs.get(uuid, set())
+def get_subscribers(subject: str):
+    return subscribers.get(subject, set())
 
 
-def get_inverter_subscribers(serial: str):
-    return inverter_subs.get(serial, set())
-
-
-def get_raspberry_subscriptions_for_ws(ws):
+def get_subscribers_for_ws(ws):
     """
-    Return a set of UUIDs this websocket is subscribed to.
+    Return a set of SUBJECTs this websocket is subscribed to.
     """
-    return {uuid for uuid, subs in raspberry_subs.items() if ws in subs}
+    return {subject for subject, subs in subscribers.items() if ws in subs}
