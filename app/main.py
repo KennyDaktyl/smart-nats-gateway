@@ -1,4 +1,5 @@
 import asyncio
+import json
 import signal
 import websockets
 import nats
@@ -24,13 +25,14 @@ async def start_gateway():
     )
     logger.info("✅ Connected to NATS Core")
     set_nats_client(nc)
+
     # -------------------------------------------------
     # NATS message handler (fan-out only)
     # -------------------------------------------------
     async def on_nats_msg(msg):
         try:
             subject = msg.subject
-            data = msg.data.decode()
+            data = json.loads(msg.data.decode())
             await send_to_subscribers(
                 subject,
                 {"subject": subject, "data": data},
