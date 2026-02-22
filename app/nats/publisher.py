@@ -19,8 +19,16 @@ async def publish_agent_control(
     action: str,
     data: dict | None = None,
 ):
+    if not micro_uuid or not action:
+        logger.warning(
+            "[NATS -> AGENT] skipped publish, missing micro_uuid/action: uuid=%s action=%s",
+            micro_uuid,
+            action,
+        )
+        return
+
     if not _nats_client:
-        logger.error("NATS client not set!")
+        logger.error("[NATS -> AGENT] skipped publish, NATS client not set")
         return
 
     subject = f"device_communication.{micro_uuid}.command.heartbeat"
@@ -32,7 +40,7 @@ async def publish_agent_control(
     }
 
     logger.info(
-        "[NATS → AGENT] subject=%s payload=%s",
+        "[NATS -> AGENT] subject=%s payload=%s",
         subject,
         payload,
     )

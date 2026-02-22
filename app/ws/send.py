@@ -40,15 +40,20 @@ async def send_to_subscribers(subject: str, data: dict):
     # ---------------------------------------------------------
     subs = await get_subscribers(subject)
     if not subs:
-        logger.debug(f"No WS subscribers for subject {subject}")
+        logger.debug("No WS subscribers for subject %s", subject)
         return
 
-    msg = json.dumps(data)
+    try:
+        msg = json.dumps(data)
+    except (TypeError, ValueError):
+        logger.exception("Failed to serialize outbound WS payload for subject %s", subject)
+        return
 
     logger.info(
-        f"Sending event for subject {subject} "
-        f"to {len(subs)} WS client(s): "
-        f"{[ws_label(ws) for ws in subs]}"
+        "Sending event for subject %s to %s WS client(s): %s",
+        subject,
+        len(subs),
+        [ws_label(ws) for ws in subs],
     )
 
     # ---------------------------------------------------------
@@ -66,7 +71,18 @@ async def send_to_subscribers(subject: str, data: dict):
 
     delivered = sum(1 for r in results if r)
 
+    if delivered != len(subs):
+        logger.warning(
+            "Sent event for subject %s to %s/%s WS subscriber(s)",
+            subject,
+            delivered,
+            len(subs),
+        )
+        return
+
     logger.info(
-        f"Sent event for subject {subject} "
-        f"to {delivered}/{len(subs)} WS subscriber(s)"
+        "Sent event for subject %s to %s/%s WS subscriber(s)",
+        subject,
+        delivered,
+        len(subs),
     )
