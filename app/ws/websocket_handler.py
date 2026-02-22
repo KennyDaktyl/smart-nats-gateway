@@ -53,23 +53,18 @@ def _extract_heartbeat_uuid(data: dict[str, Any]) -> str | None:
     return micro_uuid.strip()
 
 
-async def _register_heartbeat_subject(subject: str, micro_uuid: str) -> bool:
+async def _register_heartbeat_subject(subject: str, micro_uuid: str):
     async with _heartbeat_lock:
         existing_uuid = _heartbeat_subjects.get(subject)
-        if existing_uuid:
-            if existing_uuid != micro_uuid:
-                logger.warning(
-                    "Heartbeat subject %s already linked to uuid=%s, got uuid=%s",
-                    subject,
-                    existing_uuid,
-                    micro_uuid,
-                )
-                return False
-
-            return True
+        if existing_uuid and existing_uuid != micro_uuid:
+            logger.warning(
+                "Heartbeat subject %s already linked to uuid=%s, got uuid=%s (overwriting)",
+                subject,
+                existing_uuid,
+                micro_uuid,
+            )
 
         _heartbeat_subjects[subject] = micro_uuid
-        return True
 
 
 async def _pop_heartbeat_subject(subject: str) -> str | None:
@@ -78,9 +73,7 @@ async def _pop_heartbeat_subject(subject: str) -> str | None:
 
 
 async def _send_start_heartbeat_if_needed(subject: str, micro_uuid: str):
-    allowed = await _register_heartbeat_subject(subject, micro_uuid)
-    if not allowed:
-        return
+    await _register_heartbeat_subject(subject, micro_uuid)
 
     await publish_agent_control(
         micro_uuid,
