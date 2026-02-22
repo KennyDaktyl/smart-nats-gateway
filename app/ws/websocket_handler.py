@@ -64,7 +64,9 @@ async def _register_heartbeat_subject(subject: str, micro_uuid: str) -> bool:
                     existing_uuid,
                     micro_uuid,
                 )
-            return False
+                return False
+
+            return True
 
         _heartbeat_subjects[subject] = micro_uuid
         return True
@@ -76,8 +78,8 @@ async def _pop_heartbeat_subject(subject: str) -> str | None:
 
 
 async def _send_start_heartbeat_if_needed(subject: str, micro_uuid: str):
-    created = await _register_heartbeat_subject(subject, micro_uuid)
-    if not created:
+    allowed = await _register_heartbeat_subject(subject, micro_uuid)
+    if not allowed:
         return
 
     await publish_agent_control(
@@ -130,7 +132,7 @@ async def _handle_subscribe(ws, data: dict[str, Any], nats_manager):
             return
 
     heartbeat_uuid = _extract_heartbeat_uuid(data)
-    if heartbeat_uuid:
+    if heartbeat_uuid and added:
         try:
             await _send_start_heartbeat_if_needed(subject, heartbeat_uuid)
         except Exception:
