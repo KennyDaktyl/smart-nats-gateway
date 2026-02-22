@@ -53,9 +53,12 @@ def _extract_heartbeat_uuid(data: dict[str, Any]) -> str | None:
     return micro_uuid.strip()
 
 
-async def _register_heartbeat_subject(subject: str, micro_uuid: str):
+async def _register_heartbeat_subject(subject: str, micro_uuid: str) -> bool:
     async with _heartbeat_lock:
         existing_uuid = _heartbeat_subjects.get(subject)
+        if existing_uuid == micro_uuid:
+            return True
+
         if existing_uuid and existing_uuid != micro_uuid:
             logger.warning(
                 "Heartbeat subject %s already linked to uuid=%s, got uuid=%s (overwriting)",
@@ -65,6 +68,7 @@ async def _register_heartbeat_subject(subject: str, micro_uuid: str):
             )
 
         _heartbeat_subjects[subject] = micro_uuid
+        return False
 
 
 async def _pop_heartbeat_subject(subject: str) -> str | None:
@@ -73,13 +77,14 @@ async def _pop_heartbeat_subject(subject: str) -> str | None:
 
 
 async def _send_start_heartbeat_if_needed(subject: str, micro_uuid: str):
-    await _register_heartbeat_subject(subject, micro_uuid)
+    already_running = await _register_heartbeat_subject(subject, micro_uuid)
+    action = "RELOAD_HEARTBEAT" if already_running else "START_HEARTBEAT"
 
     await publish_agent_control(
         micro_uuid,
-        action="START_HEARTBEAT",
+        action=action,
     )
-    logger.info("Heartbeat START requested for subject=%s uuid=%s", subject, micro_uuid)
+    logger.info("Heartbeat %s requested for subject=%s uuid=%s", action, subject, micro_uuid)
 
 
 async def _send_stop_heartbeat_if_needed(subject: str):
