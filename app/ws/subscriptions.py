@@ -1,9 +1,6 @@
 import asyncio
-from app.core.logging import logger
 
-# -------------------------------------------------------------------
-# Global state (protected by lock)
-# -------------------------------------------------------------------
+from app.core.logging import logger
 
 # subject -> set(ws)
 subscribers: dict[str, set] = {}
@@ -14,10 +11,6 @@ ws_sets: dict = {}
 _subs_lock = asyncio.Lock()
 
 
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
-
 def ws_label(ws) -> str:
     peer = getattr(ws, "remote_address", None)
     if isinstance(peer, tuple) and len(peer) >= 2:
@@ -27,77 +20,78 @@ def ws_label(ws) -> str:
     return f"ws#{id(ws)}@{peer_repr}"
 
 
-# -------------------------------------------------------------------
-# Subscription management
-# -------------------------------------------------------------------
-
 async def add_subscription(subject: str, ws) -> bool:
     """
     Add ws to subject.
 
     Returns:
-        True  -> this ws is the FIRST subscriber for this subject
-        False -> subject already had subscribers
+        added -> whether ws was newly added to subject
     """
     async with _subs_lock:
         subs = subscribers.setdefault(subject, set())
         already = ws in subs
-        was_empty = len(subs) == 0
-
         subs.add(ws)
         ws_sets.setdefault(ws, set()).add(subject)
 
         logger.info(
-            f"[subs] {subject} <- {ws_label(ws)} "
-            f"({'already' if already else 'new'}) | total={len(subs)}"
+            "[subs] %s <- %s (%s) | total=%s",
+            subject,
+            ws_label(ws),
+            "already" if already else "new",
+            len(subs),
         )
 
-        return was_empty and not already
+        return not already
 
 
-async def remove_subscription(subject: str, ws) -> bool:
+async def remove_subscription(subject: str, ws) -> tuple[bool, bool]:
     """
     Remove ws from subject.
 
     Returns:
-        True  -> subject has NO subscribers left
-        False -> subject still has subscribers
+        removed  -> whether ws was removed from subject
+        is_empty -> whether subject transitioned to 0 subscribers
     """
     async with _subs_lock:
         subs = subscribers.get(subject)
         if not subs or ws not in subs:
-            return False
+            return False, False
 
         subs.remove(ws)
-        ws_sets.get(ws, set()).discard(subject)
+        ws_subjects = ws_sets.get(ws)
+        if ws_subjects is not None:
+            ws_subjects.discard(subject)
+            if not ws_subjects:
+                ws_sets.pop(ws, None)
 
         logger.info(
-            f"[subs] {subject} -/-> {ws_label(ws)} | remaining={len(subs)}"
+            "[subs] %s -/-> %s | remaining=%s",
+            subject,
+            ws_label(ws),
+            len(subs),
         )
 
         if not subs:
             subscribers.pop(subject, None)
-            logger.info(
-                f"[subs] Subject {subject} has no remaining WS subscribers"
-            )
-            return True
+            logger.info("[subs] subject %s has no remaining WS subscribers", subject)
+            return True, True
 
-        return False
+        return True, False
 
 
-async def remove_ws(ws):
+async def remove_ws(ws) -> tuple[set[str], set[str]]:
     """
-    Remove websocket from ALL subjects.
+    Remove websocket from all subjects.
 
     Returns:
-        removed_count: int
-        emptied_subjects: set[str]
+        removed_subjects: all subjects where ws was removed
+        emptied_subjects: subjects that transitioned to 0 subscribers
     """
     async with _subs_lock:
-        subjects = ws_sets.pop(ws, set())
+        removed_subjects = ws_sets.pop(ws, set())
         emptied_subjects: set[str] = set()
 
-        for subject in subjects:
+        for subject in removed_subjects:
             subs = subscribers.get(subject)
             if not subs:
                 continue
@@ -108,43 +102,21 @@ async def remove_ws(ws):
                 emptied_subjects.add(subject)
 
         logger.info(
-            f"[subs] {ws_label(ws)} removed from {len(subjects)} subjects"
+            "[subs] %s removed from %s subjects",
+            ws_label(ws),
+            len(removed_subjects),
         )
 
-        return len(subjects), emptied_subjects
+        return set(removed_subjects), emptied_subjects
 
-
-# -------------------------------------------------------------------
-# Read helpers (SAFE snapshots)
-# -------------------------------------------------------------------
 
 async def get_subscribers(subject: str) -> set:
     """
-    Returns a SNAPSHOT of WS subscribers for subject.
+    Returns a snapshot of WS subscribers for subject.
     """
     async with _subs_lock:
         return set(subscribers.get(subject, set()))
 
-
-async def get_subscribers_for_ws(ws) -> set[str]:
-    """
-    Returns a SNAPSHOT of subjects for this WS.
-    """
-    async with _subs_lock:
-        return set(ws_sets.get(ws, set()))
-
-
-async def subscribers_count(subject: str) -> int:
-    """
-    Returns number of WS subscribers for subject.
-    """
-    async with _subs_lock:
-        return len(subscribers.get(subject, set()))
-
-
-# -------------------------------------------------------------------
-# WS lifecycle
-# -------------------------------------------------------------------
 
 async def register_client(ws):
     """
