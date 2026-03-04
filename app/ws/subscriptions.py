@@ -1,17 +1,17 @@
-# app/ws/subscriptions.py
+import asyncio
+
 from app.core.logging import logger
 
-raspberry_subs: dict[str, set] = {}
-inverter_subs: dict[str, set] = {}
+# subject -> set(ws)
+subscribers: dict[str, set] = {}
 
-clients = set()
-raspberry_ws_sets: dict = {}
+# ws -> set(subject)
+ws_sets: dict = {}
+
+_subs_lock = asyncio.Lock()
 
 
 def ws_label(ws) -> str:
-    """
-    Helper used only for logging to identify a websocket connection.
-    """
     peer = getattr(ws, "remote_address", None)
     if isinstance(peer, tuple) and len(peer) >= 2:
         peer_repr = f"{peer[0]}:{peer[1]}"
@@ -20,102 +20,107 @@ def ws_label(ws) -> str:
     return f"ws#{id(ws)}@{peer_repr}"
 
 
-def add_raspberry_subscription(uuid: str, ws):
-    subs = raspberry_subs.setdefault(uuid, set())
-    already = ws in subs
-    subs.add(ws)
-    logger.info(
-        f"[subs] Raspberry {uuid} <- {ws_label(ws)} "
-        f"({'already' if already else 'new'}) | total for uuid={len(subs)}"
-    )
+async def add_subscription(subject: str, ws) -> bool:
+    """
+    Add ws to subject.
+
+    Returns:
+        added -> whether ws was newly added to subject
+    """
+    async with _subs_lock:
+        subs = subscribers.setdefault(subject, set())
+        already = ws in subs
+        subs.add(ws)
+        ws_sets.setdefault(ws, set()).add(subject)
+
+        logger.info(
+            "[subs] %s <- %s (%s) | total=%s",
+            subject,
+            ws_label(ws),
+            "already" if already else "new",
+            len(subs),
+        )
+
+        return not already
 
 
-def remove_raspberry_subscription(uuid: str, ws):
-    subs = raspberry_subs.get(uuid)
-    if subs is None:
-        return
+async def remove_subscription(subject: str, ws) -> tuple[bool, bool]:
+    """
+    Remove ws from subject.
 
-    subs.discard(ws)
-    logger.info(
-        f"[subs] Raspberry {uuid} removed {ws_label(ws)} "
-        f"| remaining for uuid={len(subs)}"
-    )
-    if not subs:
-        raspberry_subs.pop(uuid, None)
-        logger.info(f"[subs] Raspberry {uuid} has no remaining WS subscribers")
+    Returns:
+        removed  -> whether ws was removed from subject
+        is_empty -> whether subject transitioned to 0 subscribers
+    """
+    async with _subs_lock:
+        subs = subscribers.get(subject)
+        if not subs or ws not in subs:
+            return False, False
 
+        subs.remove(ws)
+        ws_subjects = ws_sets.get(ws)
+        if ws_subjects is not None:
+            ws_subjects.discard(subject)
+            if not ws_subjects:
+                ws_sets.pop(ws, None)
 
-def add_inverter_subscription(serial: str, ws):
-    subs = inverter_subs.setdefault(serial, set())
-    already = ws in subs
-    subs.add(ws)
-    logger.info(
-        f"[subs] Inverter {serial} <- {ws_label(ws)} "
-        f"({'already' if already else 'new'}) | total for serial={len(subs)}"
-    )
+        logger.info(
+            "[subs] %s -/-> %s | remaining=%s",
+            subject,
+            ws_label(ws),
+            len(subs),
+        )
 
+        if not subs:
+            subscribers.pop(subject, None)
+            logger.info("[subs] subject %s has no remaining WS subscribers", subject)
+            return True, True
 
-def remove_inverter_subscription(serial: str, ws):
-    subs = inverter_subs.get(serial)
-    if subs is None:
-        return
-
-    subs.discard(ws)
-    logger.info(
-        f"[subs] Inverter {serial} removed {ws_label(ws)} "
-        f"| remaining for serial={len(subs)}"
-    )
-    if not subs:
-        inverter_subs.pop(serial, None)
-        logger.info(f"[subs] Inverter {serial} has no remaining WS subscribers")
+        return True, False
 
 
-def remove_ws(ws):
-    removed_raspberry = 0
-    removed_inverter = 0
+async def remove_ws(ws) -> tuple[set[str], set[str]]:
+    """
+    Remove websocket from all subjects.
 
-    raspberry_ws_sets.pop(ws, None)
+    Returns:
+        removed_subjects: all subjects where ws was removed
+        emptied_subjects: subjects that transitioned to 0 subscribers
+    """
+    async with _subs_lock:
+        removed_subjects = ws_sets.pop(ws, set())
+        emptied_subjects: set[str] = set()
 
-    for uuid, subs in list(raspberry_subs.items()):
-        if ws in subs:
-            removed_raspberry += 1
+        for subject in removed_subjects:
+            subs = subscribers.get(subject)
+            if not subs:
+                continue
+
             subs.discard(ws)
             if not subs:
-                raspberry_subs.pop(uuid, None)
+                subscribers.pop(subject, None)
+                emptied_subjects.add(subject)
 
-    for serial, subs in list(inverter_subs.items()):
-        if ws in subs:
-            removed_inverter += 1
-            subs.discard(ws)
-            if not subs:
-                inverter_subs.pop(serial, None)
+        logger.info(
+            "[subs] %s removed from %s subjects",
+            ws_label(ws),
+            len(removed_subjects),
+        )
 
-    clients.discard(ws)
-    logger.info(
-        f"[subs] {ws_label(ws)} removed from {removed_raspberry} raspberry "
-        f"and {removed_inverter} inverter subscription(s)"
-    )
-    return removed_raspberry, removed_inverter
+        return set(removed_subjects), emptied_subjects
 
 
-def get_cached_raspberry_set(ws):
-    return raspberry_ws_sets.get(ws, set())
-
-
-def cache_raspberry_set(ws, uuids: set[str]):
-    raspberry_ws_sets[ws] = set(uuids)
-
-
-def get_raspberry_subscribers(uuid: str):
-    return raspberry_subs.get(uuid, set())
-
-
-def get_inverter_subscribers(serial: str):
-    return inverter_subs.get(serial, set())
-
-
-def get_raspberry_subscriptions_for_ws(ws):
+async def get_subscribers(subject: str) -> set:
     """
-    Return a set of UUIDs this websocket is subscribed to.
+    Returns a snapshot of WS subscribers for subject.
     """
-    return {uuid for uuid, subs in raspberry_subs.items() if ws in subs}
+    async with _subs_lock:
+        return set(subscribers.get(subject, set()))
+
+
+async def register_client(ws):
+    """
+    Register new WS connection.
+    """
+    async with _subs_lock:
+        ws_sets.setdefault(ws, set())

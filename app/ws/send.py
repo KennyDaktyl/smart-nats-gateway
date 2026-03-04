@@ -1,76 +1,88 @@
-#app/ws/send.py
 import json
+import asyncio
+
 from app.ws.subscriptions import (
-    get_raspberry_subscribers,
-    get_inverter_subscribers,
+    get_subscribers,
     ws_label,
 )
 from app.core.logging import logger
 
 
-async def send_to_subscribers(uuid: str, payload: dict):
-    subs = get_raspberry_subscribers(uuid)
+SEND_TIMEOUT = 1.0  # seconds
+
+
+async def _send_one(ws, msg: str, subject: str) -> bool:
+    """
+    Send message to single WS client.
+
+    Returns:
+        True  -> delivered
+        False -> failed / timeout
+    """
+    try:
+        await asyncio.wait_for(ws.send(msg), timeout=SEND_TIMEOUT)
+        return True
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"WS send timeout to {ws_label(ws)} for subject {subject}"
+        )
+    except Exception as e:
+        logger.warning(
+            f"WS send failed to {ws_label(ws)} "
+            f"for subject {subject}: {e}"
+        )
+    return False
+
+
+async def send_to_subscribers(subject: str, data: dict):
+    # ---------------------------------------------------------
+    # Snapshot subscribers (SAFE)
+    # ---------------------------------------------------------
+    subs = await get_subscribers(subject)
     if not subs:
-        logger.info(f"No WS subscribers for Raspberry {uuid}, skipping send")
+        logger.debug("No WS subscribers for subject %s", subject)
         return
 
-    msg = json.dumps(payload)
-    dead = []
-
-    subscribers_labels = [ws_label(ws) for ws in subs]
-    logger.info(
-        f"Sending heartbeat for Raspberry {uuid} to {len(subs)} WS client(s): "
-        f"{subscribers_labels}"
-    )
-
-    for ws in list(subs):
-        try:
-            await ws.send(msg)
-        except Exception as e:
-            dead.append(ws)
-            logger.warning(f"Send failed to {ws_label(ws)} for Raspberry {uuid}: {e}")
-
-    if dead:
-        logger.info(
-            f"Pruned {len(dead)} dead WS connections for Raspberry {uuid}"
-        )
-
-    delivered = len(subs) - len(dead)
-    logger.info(f"Sent heartbeat to {delivered} WS subscriber(s) for Raspberry {uuid}")
-
-    for ws in dead:
-        subs.discard(ws)
-
-
-async def send_to_inverter_subscribers(serial: str, payload: dict):
-    subs = get_inverter_subscribers(serial)
-    if not subs:
-        logger.info(f"No WS subscribers for Inverter {serial}, skipping send")
+    try:
+        msg = json.dumps(data)
+    except (TypeError, ValueError):
+        logger.exception("Failed to serialize outbound WS payload for subject %s", subject)
         return
 
-    msg = json.dumps(payload)
-    dead = []
-
-    subscribers_labels = [ws_label(ws) for ws in subs]
     logger.info(
-        f"Sending inverter update for {serial} to {len(subs)} WS client(s): "
-        f"{subscribers_labels}"
+        "Sending event for subject %s to %s WS client(s): %s",
+        subject,
+        len(subs),
+        [ws_label(ws) for ws in subs],
     )
 
-    for ws in list(subs):
-        try:
-            await ws.send(msg)
-        except Exception as e:
-            dead.append(ws)
-            logger.warning(f"Send failed to {ws_label(ws)} for Inverter {serial}: {e}")
+    # ---------------------------------------------------------
+    # Fan-out PARALLEL (isolated clients)
+    # ---------------------------------------------------------
+    tasks = [
+        _send_one(ws, msg, subject)
+        for ws in subs
+    ]
 
-    if dead:
-        logger.info(
-            f"Pruned {len(dead)} dead WS connections for Inverter {serial}"
+    results = await asyncio.gather(
+        *tasks,
+        return_exceptions=False,
+    )
+
+    delivered = sum(1 for r in results if r)
+
+    if delivered != len(subs):
+        logger.warning(
+            "Sent event for subject %s to %s/%s WS subscriber(s)",
+            subject,
+            delivered,
+            len(subs),
         )
+        return
 
-    delivered = len(subs) - len(dead)
-    logger.info(f"Sent inverter update to {delivered} WS subscriber(s) for Inverter {serial}")
-
-    for ws in dead:
-        subs.discard(ws)
+    logger.info(
+        "Sent event for subject %s to %s/%s WS subscriber(s)",
+        subject,
+        delivered,
+        len(subs),
+    )
