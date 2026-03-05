@@ -5,8 +5,9 @@ WebSocket control-plane contract:
 - unsubscribe_many: {"action":"unsubscribe_many","subjects":["...", "..."]}
 
 Gateway validates only shape (required fields) and never enforces any subject schema.
-Heartbeat control is optional and activated only when subscribe payload explicitly carries
-event == HEARTBEAT_EVENT_NAME and a valid uuid.
+Heartbeat control is optional and activated when subscribe payload carries
+event == HEARTBEAT_EVENT_NAME and a valid uuid. As a fallback, gateway can
+derive uuid/event from the subject format.
 """
 
 import asyncio
@@ -39,18 +40,42 @@ def _normalize_subject(subject: Any) -> str | None:
 
 def _extract_heartbeat_uuid(data: dict[str, Any]) -> str | None:
     event_name = data.get("event")
-    if event_name != settings.HEARTBEAT_EVENT_NAME:
-        return None
-
     micro_uuid = data.get("uuid")
-    if not isinstance(micro_uuid, str) or not micro_uuid.strip():
-        logger.warning(
-            "Heartbeat control skipped, invalid uuid in subscribe payload: %s",
-            data,
-        )
+    if event_name == settings.HEARTBEAT_EVENT_NAME:
+        if not isinstance(micro_uuid, str) or not micro_uuid.strip():
+            logger.warning(
+                "Heartbeat control skipped, invalid uuid in subscribe payload: %s",
+                data,
+            )
+            return None
+
+        return micro_uuid.strip()
+
+    # Fallback for legacy/partial subscribe payloads: parse from subject
+    subject = _normalize_subject(data.get("subject"))
+    if not subject:
         return None
 
-    return micro_uuid.strip()
+    parts = subject.split(".")
+    if len(parts) < 4:
+        return None
+
+    if parts[2] != "event":
+        return None
+
+    subject_event = ".".join(parts[3:])
+    if subject_event != settings.HEARTBEAT_EVENT_NAME:
+        return None
+
+    parsed_uuid = parts[1].strip()
+    if not parsed_uuid:
+        return None
+
+    logger.info(
+        "Heartbeat control fallback used (derived uuid/event from subject=%s)",
+        subject,
+    )
+    return parsed_uuid
 
 
 async def _register_heartbeat_subject(subject: str, micro_uuid: str) -> bool:
