@@ -1,7 +1,7 @@
 services:
-  nats_gateway:
+  smart-gateway:
     build: .
-    container_name: nats_gateway
+    container_name: smart-gateway
     restart: unless-stopped
     ports:
     - "8765:8765"
